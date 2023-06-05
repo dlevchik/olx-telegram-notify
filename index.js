@@ -2,7 +2,6 @@ require('dotenv').config();
 const rp = require('request-promise');
 const cheerio = require('cheerio');
 const log = require('simple-node-logger').createSimpleLogger('script.log');
-const schedule = require('node-schedule');
 const sqlite3 = require('sqlite3').verbose();
 
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
@@ -13,6 +12,7 @@ const TELEGRAM_REQUESTS_DELAY_MS = 5000;
 // Useful when you have some old advertisements with processed id's on a top of
 // a list and under them there is a new one, and you don't want to miss it.
 const EXISTING_ADVERTISEMENTS_ATTEMPT = 3;
+const MAIN_PARSING_MS_DELAY = 1000 * 60;
 
 const db = new sqlite3.Database('db.sqllite', (err) => {
     if (err) {
@@ -28,9 +28,7 @@ db.close((err) => {
     log.info('Close the database connection.');
 
     log.info('Scheduling job... Script will catch advertisements every minute.')
-    const job = schedule.scheduleJob('* * * * *', function () {
-        parseListPage(ENTRY_LIST_URL);
-    });
+    parseListPage(ENTRY_LIST_URL);
 });
 
 function parseListPage(pageUrl) {
@@ -43,7 +41,7 @@ function parseListPage(pageUrl) {
             const advertisements = list_page('.listing-grid-container [data-cy="l-card"]');
             const db = new sqlite3.Database('db.sqllite', (err) => {
                 if (err) {
-                    return log.error(err);
+                    throw err;
                 }
                 log.info('Connected to the in-memory SQlite database.');
             });
@@ -86,7 +84,7 @@ function parseListPage(pageUrl) {
                 const placeholders = new_advertisements_ids.map(() => '(?)').join(',');
                 db.run(`INSERT INTO advertisements(adv_id) VALUES ${placeholders}`, new_advertisements_ids, function(err) {
                     if (err) {
-                        return log.error(err);
+                        throw err;
                     }
                     log.info(`A row has been inserted for advertisements ${new_advertisements_ids.join(', ')}`);
                 });
@@ -128,8 +126,7 @@ function parseListPage(pageUrl) {
                        return rp(TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media)))
                            .then(function () {
                                log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
-                           })
-                           .catch(log.error);
+                           });
                     }));
                 current_delay += TELEGRAM_REQUESTS_DELAY_MS;
             }
@@ -137,16 +134,23 @@ function parseListPage(pageUrl) {
             Promise.all(promises).then(function () {
                 db.close((err) => {
                     if (err) {
-                        return log.error(err);
+                        throw err;
                     }
                     log.info('Close the database connection.');
                 });
                 log.info('Finished script run.');
+
+                setTimeout(function () {
+                    parseListPage(pageUrl);
+                }, MAIN_PARSING_MS_DELAY);
             });
         })
         .catch(function(err){
             log.error(err);
-            return [];
+
+            setTimeout(function () {
+                parseListPage(pageUrl);
+            }, MAIN_PARSING_MS_DELAY);
         });
 }
 
@@ -170,10 +174,6 @@ async function parseAdvertisementPage(advertisementUrl) {
             advertisement_data.description = advertisement_page('[data-cy="ad_description"] > div').text();
 
             return advertisement_data;
-        })
-        .catch(function(err){
-            log.error(err);
-            return null;
         });
 }
 
