@@ -8,7 +8,7 @@ const schedule = require('node-schedule');
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
 const TELEGRAM_BOT_URL = 'https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_API_KEY;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_TARGET_CHAT_ID;
-const delay_ms = 600;
+const delay_ms = 1200;
 
 try {
     global.LAST_UPDATE_TIMESTAMP = parseInt(fs.readFileSync('timestamp.txt'));
