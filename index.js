@@ -56,6 +56,7 @@ function parseListPage(pageUrl) {
 
                 // Filter out the ones promoted.
                 if (advertisement('[data-testid="adCard-featured"]').length) {
+                    log.info('Skipping promoted advertisement...');
                     continue;
                 }
 
