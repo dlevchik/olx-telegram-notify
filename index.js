@@ -8,6 +8,7 @@ const schedule = require('node-schedule');
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
 const TELEGRAM_BOT_URL = 'https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_API_KEY;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_TARGET_CHAT_ID;
+const delay_ms = 600;
 
 try {
     global.LAST_UPDATE_TIMESTAMP = parseInt(fs.readFileSync('timestamp.txt'));
@@ -53,40 +54,7 @@ function parseListPage(pageUrl) {
             new_advertisements_list.push(advertisement_data);
         }
 
-        for (let new_advertisement of new_advertisements_list) {
-            // At least 2 photos.
-            if (new_advertisement.advertisement_images_urls.length <= 1) {
-                log.warn('Advertisement with 1 or less photos: ' + new_advertisement.url);
-                continue;
-            }
-
-            const msg_text = `<a href="${new_advertisement.url}">${new_advertisement.title}</a>\n<strong>${new_advertisement.price}</strong>\n\n${new_advertisement.description}`;
-
-            let media = [];
-            let processed_items = 0;
-            for (const media_url of new_advertisement.advertisement_images_urls) {
-                processed_items++;
-
-                // Max 10 photos.
-                if (processed_items > 10) {
-                    break;
-                }
-
-                media.push({
-                    'type': 'photo',
-                    'media': media_url,
-                });
-            }
-
-            media[0].caption = msg_text;
-            media[0].parse_mode = 'HTML';
-
-            rp(TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media)))
-                .then(function (data) {
-                    log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
-                })
-                .catch(log.error);
-        }
+        msgTelegramIterate(new_advertisements_list);
 
         global.LAST_UPDATE_TIMESTAMP = Math.floor(Date.now() / 1000);
         fs.writeFileSync('timestamp.txt', LAST_UPDATE_TIMESTAMP.toString());
@@ -96,6 +64,57 @@ function parseListPage(pageUrl) {
         log.error(err);
         return [];
     });
+}
+
+function msgTelegramIterate(new_advertisements_list) {
+    let index = 0;
+    const len = new_advertisements_list.length;
+
+    function run() {
+        const new_advertisement = new_advertisements_list[index];
+
+        // At least 2 photos.
+        if (new_advertisement.advertisement_images_urls.length <= 1) {
+            log.warn('Advertisement with 1 or less photos: ' + new_advertisement.url);
+            index++;
+            return;
+        }
+
+        const msg_text = `<a href="${new_advertisement.url}">${new_advertisement.title}</a>\n<strong>${new_advertisement.price}</strong>\n\n${new_advertisement.description}`;
+
+        let media = [];
+        let processed_items = 0;
+        for (const media_url of new_advertisement.advertisement_images_urls) {
+            processed_items++;
+
+            // Max 10 photos.
+            if (processed_items > 10) {
+                break;
+            }
+
+            media.push({
+                'type': 'photo',
+                'media': media_url,
+            });
+        }
+
+        media[0].caption = msg_text;
+        media[0].parse_mode = 'HTML';
+
+        const telegram_request = TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media));
+
+        return rp(telegram_request).then(() => {
+            log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
+            index++;
+            // if still more to process, insert delay before next request
+            if (index < len) {
+                return delay().then(run);
+            }
+        })
+        .catch(log.error);
+    }
+
+    return run();
 }
 
 async function parseAdvertisementPage(advertisementUrl) {
@@ -147,4 +166,10 @@ async function parseAdvertisementPage(advertisementUrl) {
             log.error(err);
             return null;
         });
+}
+
+function delay(t = delay_ms) {
+    return new Promise(resolve => {
+        setTimeout(resolve, t);
+    });
 }
