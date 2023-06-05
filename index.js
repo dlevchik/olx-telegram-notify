@@ -32,89 +32,78 @@ const job = schedule.scheduleJob('* * * * *', function () {
 function parseListPage(pageUrl) {
     log.info('Started parsing list page...');
     rp(pageUrl)
-    .then(async function(html) {
-        const list_page = cheerio.load(html);
-        // Receive all advertisements from list. Filter out the ones promoted.
-        const advertisements = list_page('.listing-grid-container [data-cy="l-card"]').filter(function( index ) {
-            const advertisement = cheerio.load(this);
-            return !advertisement('[data-testid="adCard-featured"]').length;
-        });
-
-        let new_advertisements_list = [];
-        for (let advertisement_elem of advertisements) {
-            const advertisement = cheerio.load(advertisement_elem);
-            const advertisement_url = 'https://www.olx.ua' + advertisement('a').attr('href');
-
-            const advertisement_data = await parseAdvertisementPage(advertisement_url);
-
-            if (advertisement_data === null) {
-                break;
-            }
-
-            new_advertisements_list.push(advertisement_data);
-        }
-
-        msgTelegramIterate(new_advertisements_list);
-
-        global.LAST_UPDATE_TIMESTAMP = Math.floor(Date.now() / 1000);
-        fs.writeFileSync('timestamp.txt', LAST_UPDATE_TIMESTAMP.toString());
-        log.info('Finished script run.');
-    })
-    .catch(function(err){
-        log.error(err);
-        return [];
-    });
-}
-
-function msgTelegramIterate(new_advertisements_list) {
-    let index = 0;
-    const len = new_advertisements_list.length;
-
-    function run() {
-        const new_advertisement = new_advertisements_list[index];
-
-        // At least 2 photos.
-        if (new_advertisement.advertisement_images_urls.length <= 1) {
-            log.warn('Advertisement with 1 or less photos: ' + new_advertisement.url);
-            index++;
-            return;
-        }
-
-        const msg_text = `<a href="${new_advertisement.url}">${new_advertisement.title}</a>\n<strong>${new_advertisement.price}</strong>\n\n${new_advertisement.description}`;
-
-        let media = [];
-        let processed_items = 0;
-        for (const media_url of new_advertisement.advertisement_images_urls) {
-            processed_items++;
-
-            // Max 10 photos.
-            if (processed_items > 10) {
-                break;
-            }
-
-            media.push({
-                'type': 'photo',
-                'media': media_url,
+        .then(async function(html) {
+            const list_page = cheerio.load(html);
+            // Receive all advertisements from list. Filter out the ones promoted.
+            const advertisements = list_page('.listing-grid-container [data-cy="l-card"]').filter(function( index ) {
+                const advertisement = cheerio.load(this);
+                return !advertisement('[data-testid="adCard-featured"]').length;
             });
-        }
 
-        media[0].caption = msg_text;
-        media[0].parse_mode = 'HTML';
+            let new_advertisements_list = [];
+            for (let advertisement_elem of advertisements) {
+                const advertisement = cheerio.load(advertisement_elem);
+                const advertisement_url = 'https://www.olx.ua' + advertisement('a').attr('href');
 
-        const telegram_request = TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media));
+                const advertisement_data = await parseAdvertisementPage(advertisement_url);
 
-        return rp(telegram_request).then(() => {
-            log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
-            index++;
-            // if still more to process, insert delay before next request
-            if (index < len) {
-                return delay().then(run);
+                if (advertisement_data === null) {
+                    break;
+                }
+
+                new_advertisements_list.push(advertisement_data);
             }
-        })
-        .catch(log.error);
-    }
 
-    return run();
+            let promises = [];
+            for (let new_advertisement of new_advertisements_list) {
+                // At least 2 photos.
+                if (new_advertisement.advertisement_images_urls.length <= 1) {
+                    log.warn('Advertisement with 1 or less photos: ' + new_advertisement.url);
+                    continue;
+                }
+
+                const msg_text = `<a href="${new_advertisement.url}">${new_advertisement.title}</a>\n<strong>${new_advertisement.price}</strong>\n\n${new_advertisement.description}`;
+
+                let media = [];
+                let processed_items = 0;
+                for (const media_url of new_advertisement.advertisement_images_urls) {
+                    processed_items++;
+
+                    // Max 10 photos.
+                    if (processed_items > 10) {
+                        break;
+                    }
+
+                    media.push({
+                        'type': 'photo',
+                        'media': media_url,
+                    });
+                }
+
+                media[0].caption = msg_text;
+                media[0].parse_mode = 'HTML';
+
+                promises.push(new Promise(resolve => setTimeout(resolve, current_delay))
+                    .then(function () {
+                       return rp(TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media)))
+                           .then(function (data) {
+                               log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
+                           })
+                           .catch(log.error);
+                    }));
+
+            }
+
+            Promise.all(promises).then(function () {
+                global.LAST_UPDATE_TIMESTAMP = Math.floor(Date.now() / 1000);
+                fs.writeFileSync('timestamp.txt', LAST_UPDATE_TIMESTAMP.toString());
+                log.info('Finished script run.');
+            });
+        })
+        .catch(function(err){
+            log.error(err);
+            return [];
+        });
 }
 
 async function parseAdvertisementPage(advertisementUrl) {
@@ -166,10 +155,4 @@ async function parseAdvertisementPage(advertisementUrl) {
             log.error(err);
             return null;
         });
-}
-
-function delay(t = delay_ms) {
-    return new Promise(resolve => {
-        setTimeout(resolve, t);
-    });
 }
