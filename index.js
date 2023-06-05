@@ -55,6 +55,7 @@ function parseListPage(pageUrl) {
             }
 
             let promises = [];
+            let current_delay = 0;
             for (let new_advertisement of new_advertisements_list) {
                 // At least 2 photos.
                 if (new_advertisement.advertisement_images_urls.length <= 1) {
@@ -85,13 +86,14 @@ function parseListPage(pageUrl) {
 
                 promises.push(new Promise(resolve => setTimeout(resolve, current_delay))
                     .then(function () {
+                       log.info('Telegram request for ' + new_advertisement.url);
                        return rp(TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media)))
                            .then(function (data) {
                                log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
                            })
                            .catch(log.error);
                     }));
-
+                current_delay += delay_ms;
             }
 
             Promise.all(promises).then(function () {
@@ -128,7 +130,7 @@ async function parseAdvertisementPage(advertisementUrl) {
             let date = new Date();
 
             let hours_now = date.getHours();
-            date.setHours(hours + 2);
+            date.setHours(hours + 3);
             date.setMinutes(minutes);
 
             if (hours_now <= 1 || hours_now === 23) {
