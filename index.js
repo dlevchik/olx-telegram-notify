@@ -1,32 +1,32 @@
 require('dotenv').config();
 const rp = require('request-promise');
 const cheerio = require('cheerio');
-const fs = require('fs');
 const log = require('simple-node-logger').createSimpleLogger('script.log');
 const schedule = require('node-schedule');
+const sqlite3 = require('sqlite3').verbose();
 
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
 const TELEGRAM_BOT_URL = 'https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_API_KEY;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_TARGET_CHAT_ID;
 const delay_ms = 5000;
 
-try {
-    global.LAST_UPDATE_TIMESTAMP = parseInt(fs.readFileSync('timestamp.txt'));
-} catch (err) {
-    if (err.errno !== -2) {
-        log.error(err);
-        throw err;
+const db = new sqlite3.Database('db.sqllite', (err) => {
+    if (err) {
+        return log.error(err);
     }
+    log.info('Open connection to create initial table if it not exists');
+});
+db.run('CREATE TABLE IF NOT EXISTS advertisements(adv_id INTEGER NOT NULL UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL )');
+db.close((err) => {
+    if (err) {
+        return log.error(err);
+    }
+    log.info('Close the database connection.');
 
-    log.info('Setting initial timestamp...');
-    const LAST_UPDATE_TIMESTAMP = Math.floor(Date.now() / 1000);
-    fs.writeFileSync('timestamp.txt', LAST_UPDATE_TIMESTAMP.toString());
-    process.exit(0);
-}
-
-log.info('Scheduling job... Script will catch advertisements every minute.')
-const job = schedule.scheduleJob('* * * * *', function () {
-    parseListPage(ENTRY_LIST_URL);
+    log.info('Scheduling job... Script will catch advertisements every minute.')
+    const job = schedule.scheduleJob('* * * * *', function () {
+        parseListPage(ENTRY_LIST_URL);
+    });
 });
 
 function parseListPage(pageUrl) {
@@ -34,24 +34,52 @@ function parseListPage(pageUrl) {
     rp(pageUrl)
         .then(async function(html) {
             const list_page = cheerio.load(html);
-            // Receive all advertisements from list. Filter out the ones promoted.
-            const advertisements = list_page('.listing-grid-container [data-cy="l-card"]').filter(function( index ) {
-                const advertisement = cheerio.load(this);
-                return !advertisement('[data-testid="adCard-featured"]').length;
+
+            // Receive all advertisements from list.
+            const advertisements = list_page('.listing-grid-container [data-cy="l-card"]');
+            const db = new sqlite3.Database('db.sqllite', (err) => {
+                if (err) {
+                    return log.error(err);
+                }
+                log.info('Connected to the in-memory SQlite database.');
             });
 
+            const processed_advertisements_ids = await db_all(db, 'SELECT adv_id FROM advertisements ORDER BY created_at DESC LIMIT 100')
+                .then(function (db_objects) {
+                    return db_objects.map(function(value,index) { return value.adv_id; });
+                });
+
             let new_advertisements_list = [];
+            let new_advertisiments_ids = [];
             for (let advertisement_elem of advertisements) {
                 const advertisement = cheerio.load(advertisement_elem);
+
+                // Filter out the ones promoted.
+                if (advertisement('[data-testid="adCard-featured"]').length) {
+                    continue;
+                }
+
+                const advertisiment_id = parseInt(advertisement_elem.attribs.id);
+                if (processed_advertisements_ids.includes(advertisiment_id)) {
+                    log.info(`Found already processed advertisiment ${advertisiment_id}, breaking`)
+                    break;
+                }
+
                 const advertisement_url = 'https://www.olx.ua' + advertisement('a').attr('href');
 
                 const advertisement_data = await parseAdvertisementPage(advertisement_url);
 
-                if (advertisement_data === null) {
-                    break;
-                }
-
                 new_advertisements_list.push(advertisement_data);
+                new_advertisiments_ids.push(advertisiment_id);
+            }
+
+            if (new_advertisiments_ids.length) {
+                db.run(`INSERT INTO advertisements(adv_id) VALUES(?)`, new_advertisiments_ids, function(err) {
+                    if (err) {
+                        return log.error(err);
+                    }
+                    log.log(`A row has been inserted for advertisiments ${new_advertisiments_ids.join(', ')}`);
+                });
             }
 
             let promises = [];
@@ -97,8 +125,12 @@ function parseListPage(pageUrl) {
             }
 
             Promise.all(promises).then(function () {
-                global.LAST_UPDATE_TIMESTAMP = Math.floor(Date.now() / 1000);
-                fs.writeFileSync('timestamp.txt', LAST_UPDATE_TIMESTAMP.toString());
+                db.close((err) => {
+                    if (err) {
+                        return log.error(err);
+                    }
+                    log.info('Close the database connection.');
+                });
                 log.info('Finished script run.');
             });
         })
@@ -117,29 +149,6 @@ async function parseAdvertisementPage(advertisementUrl) {
             };
             const advertisement_page = cheerio.load(html);
 
-            let posted_at = advertisement_page('[data-cy="ad-posted-at"]').text();
-            if (!posted_at.includes('Сьогодні о ')) {
-                return null;
-            }
-
-            posted_at = posted_at.replace('Сьогодні о ', '');
-            [hours, minutes] = posted_at.split(':');
-            hours = parseInt(hours);
-            minutes = parseInt(minutes);
-
-            let date = new Date();
-
-            let hours_now = date.getHours();
-            date.setHours(hours + 3, minutes, 0);
-
-            if (hours_now <= 1 || hours_now === 23) {
-                date.setDate(date.getDate() - 1);
-            }
-
-            if (Math.floor(date.getTime() / 1000) <= LAST_UPDATE_TIMESTAMP) {
-                return null;
-            }
-
             let advertisement_images_urls = []
             for (let advertisement_image of advertisement_page('[data-cy="adPhotos-swiperSlide"] img')) {
                 advertisement_images_urls.push(advertisement_image.attribs.src)
@@ -156,4 +165,13 @@ async function parseAdvertisementPage(advertisementUrl) {
             log.error(err);
             return null;
         });
+}
+
+async function db_all(db, query){
+    return new Promise(function(resolve,reject){
+        db.all(query, function(err,rows){
+            if(err){return reject(err);}
+            resolve(rows);
+        });
+    });
 }
