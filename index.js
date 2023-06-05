@@ -8,7 +8,11 @@ const sqlite3 = require('sqlite3').verbose();
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
 const TELEGRAM_BOT_URL = 'https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_API_KEY;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_TARGET_CHAT_ID;
-const delay_ms = 5000;
+const TELEGRAM_REQUESTS_DELAY_MS = 5000;
+// Script will skip this many existing advertisements before breaking the loop.
+// Useful when you have some old advertisements with processed id's on a top of
+// a list and under them there is a new one, and you don't want to miss it.
+const EXISTING_ADVERTISEMENTS_ATTEMPT = 3;
 
 const db = new sqlite3.Database('db.sqllite', (err) => {
     if (err) {
@@ -44,13 +48,9 @@ function parseListPage(pageUrl) {
                 log.info('Connected to the in-memory SQlite database.');
             });
 
-            const processed_advertisements_ids = await db_all(db, 'SELECT adv_id FROM advertisements ORDER BY created_at DESC LIMIT 100')
-                .then(function (db_objects) {
-                    return db_objects.map(function(value,index) { return value.adv_id; });
-                });
-
             let new_advertisements_list = [];
-            let new_advertisiments_ids = [];
+            let new_advertisements_ids = [];
+            let current_new_adv_attempts = 0;
             for (let advertisement_elem of advertisements) {
                 const advertisement = cheerio.load(advertisement_elem);
 
@@ -60,10 +60,18 @@ function parseListPage(pageUrl) {
                     continue;
                 }
 
-                const advertisiment_id = parseInt(advertisement_elem.attribs.id);
-                if (processed_advertisements_ids.includes(advertisiment_id)) {
-                    log.info(`Found already processed advertisiment ${advertisiment_id}, breaking`)
-                    break;
+                const advertisement_id = parseInt(advertisement_elem.attribs.id);
+                const advertisement_exists = await db_all(db, 'SELECT 1 as e FROM advertisements WHERE adv_id = ?', [advertisement_id]);
+                if (advertisement_exists.length) {
+                    current_new_adv_attempts++;
+
+                    if (current_new_adv_attempts >= EXISTING_ADVERTISEMENTS_ATTEMPT) {
+                        log.info('Run out of new advertisements attempts, breaking...');
+                        break;
+                    }
+
+                    log.info(`Found already processed advertisement ${advertisement_id}, continuing`);
+                    continue;
                 }
 
                 const advertisement_url = 'https://www.olx.ua' + advertisement('a').attr('href');
@@ -71,16 +79,16 @@ function parseListPage(pageUrl) {
                 const advertisement_data = await parseAdvertisementPage(advertisement_url);
 
                 new_advertisements_list.push(advertisement_data);
-                new_advertisiments_ids.push(advertisiment_id);
+                new_advertisements_ids.push(advertisement_id);
             }
 
-            if (new_advertisiments_ids.length) {
-                const placeholders = new_advertisiments_ids.map((advertisiment_id) => '(?)').join(',');
-                db.run(`INSERT INTO advertisements(adv_id) VALUES ${placeholders}`, new_advertisiments_ids, function(err) {
+            if (new_advertisements_ids.length) {
+                const placeholders = new_advertisements_ids.map(() => '(?)').join(',');
+                db.run(`INSERT INTO advertisements(adv_id) VALUES ${placeholders}`, new_advertisements_ids, function(err) {
                     if (err) {
                         return log.error(err);
                     }
-                    log.log(`A row has been inserted for advertisements ${new_advertisiments_ids.join(', ')}`);
+                    log.info(`A row has been inserted for advertisements ${new_advertisements_ids.join(', ')}`);
                 });
             }
 
@@ -118,12 +126,12 @@ function parseListPage(pageUrl) {
                     .then(function () {
                        log.info('Telegram request for ' + new_advertisement.url);
                        return rp(TELEGRAM_BOT_URL + '/sendMediaGroup?chat_id=' + TELEGRAM_CHAT_ID + '&media=' + encodeURIComponent(JSON.stringify(media)))
-                           .then(function (data) {
+                           .then(function () {
                                log.info('Sent apartment ' + new_advertisement.url + ' to telegram bot');
                            })
                            .catch(log.error);
                     }));
-                current_delay += delay_ms;
+                current_delay += TELEGRAM_REQUESTS_DELAY_MS;
             }
 
             Promise.all(promises).then(function () {
@@ -169,9 +177,9 @@ async function parseAdvertisementPage(advertisementUrl) {
         });
 }
 
-async function db_all(db, query){
+async function db_all(db, query, args = []){
     return new Promise(function(resolve,reject){
-        db.all(query, function(err,rows){
+        db.all(query, args, function(err,rows){
             if(err){return reject(err);}
             resolve(rows);
         });
