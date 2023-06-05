@@ -3,6 +3,7 @@ const rp = require('request-promise');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const log = require('simple-node-logger').createSimpleLogger('script.log');
+const schedule = require('node-schedule');
 
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
 const TELEGRAM_BOT_URL = 'https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_API_KEY;
@@ -22,7 +23,10 @@ try {
     process.exit(0);
 }
 
-parseListPage(ENTRY_LIST_URL);
+log.info('Scheduling job... Script will catch advertisements every minute.')
+const job = schedule.scheduleJob('* * * * *', function () {
+    parseListPage(ENTRY_LIST_URL);
+});
 
 function parseListPage(pageUrl) {
     log.info('Started parsing list page...');
@@ -84,7 +88,8 @@ function parseListPage(pageUrl) {
                 .catch(log.error);
         }
 
-        fs.writeFileSync('timestamp.txt', Math.floor(Date.now() / 1000).toString());
+        global.LAST_UPDATE_TIMESTAMP = Math.floor(Date.now() / 1000);
+        fs.writeFileSync('timestamp.txt', LAST_UPDATE_TIMESTAMP.toString());
         log.info('Finished script run.');
     })
     .catch(function(err){
@@ -109,10 +114,18 @@ async function parseAdvertisementPage(advertisementUrl) {
 
             posted_at = posted_at.replace('Сьогодні о ', '');
             [hours, minutes] = posted_at.split(':');
+            hours = parseInt(hours);
+            minutes = parseInt(minutes);
 
             let date = new Date();
+
+            let hours_now = date.getHours();
             date.setHours(hours);
             date.setMinutes(minutes);
+
+            if (hours_now <= 1 || hours_now === 23) {
+                date.setDate(date.getDate() - 1);
+            }
 
             if (Math.floor(date.getTime() / 1000) <= LAST_UPDATE_TIMESTAMP) {
                 return null;
