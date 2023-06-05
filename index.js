@@ -64,7 +64,7 @@ function parseListPage(pageUrl) {
                     current_new_adv_attempts++;
 
                     if (current_new_adv_attempts >= EXISTING_ADVERTISEMENTS_ATTEMPT) {
-                        log.info('Run out of new advertisements attempts, breaking...');
+                        log.info(`Found already processed advertisement ${advertisement_id}. Run out of new advertisements attempts, breaking...`);
                         break;
                     }
 
