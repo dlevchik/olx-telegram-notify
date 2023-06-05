@@ -74,11 +74,12 @@ function parseListPage(pageUrl) {
             }
 
             if (new_advertisiments_ids.length) {
-                db.run(`INSERT INTO advertisements(adv_id) VALUES(?)`, new_advertisiments_ids, function(err) {
+                const placeholders = new_advertisiments_ids.map((advertisiment_id) => '(?)').join(',');
+                db.run(`INSERT INTO advertisements(adv_id) VALUES ${placeholders}`, new_advertisiments_ids, function(err) {
                     if (err) {
                         return log.error(err);
                     }
-                    log.log(`A row has been inserted for advertisiments ${new_advertisiments_ids.join(', ')}`);
+                    log.log(`A row has been inserted for advertisements ${new_advertisiments_ids.join(', ')}`);
                 });
             }
 
