@@ -130,8 +130,7 @@ async function parseAdvertisementPage(advertisementUrl) {
             let date = new Date();
 
             let hours_now = date.getHours();
-            date.setHours(hours + 3);
-            date.setMinutes(minutes);
+            date.setHours(hours + 3, minutes, 0);
 
             if (hours_now <= 1 || hours_now === 23) {
                 date.setDate(date.getDate() - 1);
