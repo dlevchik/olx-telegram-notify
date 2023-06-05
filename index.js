@@ -120,7 +120,7 @@ async function parseAdvertisementPage(advertisementUrl) {
             let date = new Date();
 
             let hours_now = date.getHours();
-            date.setHours(hours);
+            date.setHours(hours + 2);
             date.setMinutes(minutes);
 
             if (hours_now <= 1 || hours_now === 23) {
