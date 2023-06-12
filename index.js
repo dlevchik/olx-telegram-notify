@@ -1,8 +1,11 @@
 require('dotenv').config();
 const rp = require('request-promise');
 const cheerio = require('cheerio');
-const log = require('simple-node-logger').createSimpleLogger('script.log');
 const sqlite3 = require('sqlite3').verbose();
+const log = require('simple-node-logger').createSimpleLogger({
+    logFilePath:'script.log',
+    timestampFormat:'YYYY-MM-DD HH:mm:ss.SSS'
+});
 
 const ENTRY_LIST_URL = process.env.ENTRY_LIST_URL;
 const TELEGRAM_BOT_URL = 'https://api.telegram.org/bot' + process.env.TELEGRAM_BOT_API_KEY;
@@ -153,6 +156,12 @@ function parseListPage(pageUrl) {
             }, MAIN_PARSING_MS_DELAY);
         });
 }
+
+process.on('unhandledRejection', function(err, promise) {
+    log.error('Unhandled rejection (promise: ', promise, ', reason: ', err, ').');
+
+    parseListPage(ENTRY_LIST_URL);
+});
 
 async function parseAdvertisementPage(advertisementUrl) {
     return rp(advertisementUrl)
