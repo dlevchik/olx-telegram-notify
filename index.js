@@ -178,7 +178,7 @@ async function parseAdvertisementPage(advertisementUrl) {
             }
             advertisement_data.advertisement_images_urls = advertisement_images_urls;
 
-            advertisement_data.title = advertisement_page('[data-cy="ad_title"]').text();
+            advertisement_data.title = advertisement_page('[data-cy="ad_title"] h4').text();
             advertisement_data.price = advertisement_page('[data-testid="ad-price-container"] h3').text();
             advertisement_data.description = advertisement_page('[data-cy="ad_description"] > div').text();
 
